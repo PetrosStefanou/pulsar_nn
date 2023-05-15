@@ -1,0 +1,1 @@
+Physics Informed Neural Network solver for the Pulsar equation in 2D.

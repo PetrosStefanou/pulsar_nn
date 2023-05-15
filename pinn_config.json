@@ -1,0 +1,16 @@
+{
+   "pinn_config" : 
+   {   
+      "N_multipoles" : 7,
+      "N_layers" : 4,
+      "N_neurons" : 80,
+      "N_points" : 10000,
+      "N_epochs" : 1000,
+      "N_renew" : 500,
+      "N_eval" : 100,
+      "N_Tcoeffs" : 2,
+      "optimizer" : "tf.keras.optimizers.Adam()",                       
+      "loss_function" : "tf.keras.losses.MeanSquaredError()",
+      "vacuum_mode" : false
+   }
+}
