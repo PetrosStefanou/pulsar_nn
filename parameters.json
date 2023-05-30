@@ -1,0 +1,13 @@
+{
+   "parameters" : 
+   {   
+      "R_lc"         : 16.67,
+      "r_c"          : 16.5033,
+      "Pc_mode"      : "free",
+      "Pc_fixed"     : 0.075284943,
+      "coordinates"  : "spherical" ,
+      "n_1"          : 500,
+      "n_2"          : 500,
+      "extent"       : 3
+   }
+}
