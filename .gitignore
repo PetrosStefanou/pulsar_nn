@@ -1,2 +1,12 @@
 # Contents of data/ directory
-data/
+/data/
+
+# .vscode directory
+/.vscode
+
+# Python cache
+plotting/__pycache__/*
+
+# Jorge's implemetation
+plotting/Pulsar_equations_results.py
+Pulsar_equation_alternative_idea_T.py
