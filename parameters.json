@@ -7,9 +7,9 @@
       "Pc_fixed"     : 0.075284943,
       "sep_width"    : 0.005,
       "coordinates"  : "spherical",
-      "n_1"          : 500,
-      "n_2"          : 500,
+      "n_1"          : 450,
+      "n_2"          : 450,
       "extent"       : 3,
-      "deriv_mode"   : "automatic"
+      "deriv_mode"   : "fd"
    }
 }

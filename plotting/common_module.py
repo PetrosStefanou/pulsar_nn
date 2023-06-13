@@ -194,84 +194,199 @@ def T_parametrization (P, P_c, N_t, parameters):
 # ===================================================================================================
 
 
-def get_scalar_functions(X, N_p, N_t, parameters):
-
-   # Calculate P, Pc from the parametrisation
-   P, Pc = P_parametrization (X, N_p, parameters)
-   
-   # Calculate T from the parametrisation. Record if automatic differentiation is to be used
-   if parameters['deriv_mode'] == 'automatic':
-
-      with tf.GradientTape() as gt:
-         gt.watch(P)
-         T = T_parametrization (P, Pc, N_t, parameters)
-   
-   elif parameters['deriv_mode'] == 'fd':
-     
-      T = T_parametrization (P, Pc, N_t, parameters)
-
-   else:
-
-      raise ValueError ("deriv_mode must be one of 'automatic', 'fd'.\n\
-                        Current value --> {}".parameters['deriv_mode'])   
-
-   # Calculate T'(P)
-   if parameters['deriv_mode'] == 'automatic':
+def get_scalar_functions_automatic (X, N_p, N_t, parameters):
     
-      T_prime = gt.gradient(T, P)
+   # Graph for 1st derivatives of P
+   with tf.GradientTape(persistent=True, watch_accessed_variables=False) as gt1:
+      gt1.watch(X)
 
-      # Convert to np.arrays and reshape
-      P = P.numpy().reshape([parameters['n_1'], parameters['n_2']])
-      T = T.numpy().reshape([parameters['n_1'], parameters['n_2']])
-      T_prime = T_prime.numpy().reshape([parameters['n_1'], parameters['n_2']])
-      Pc = float(Pc)
+      # Graph for 2nd derivatives of P
+      with tf.GradientTape(persistent=True, watch_accessed_variables=False) as gt2:
+         gt2.watch(X)
+
+         # Calculate P, Pc from the parametrisation
+         P, Pc = P_parametrization (X, N_p, parameters)
+
+      # Calculate 1st derivatives
+      Pgrad = gt2.gradient(P, X)
+      dP_dq = Pgrad[:,0]
+      dP_dmu = Pgrad[:,1]
+
+   # Calculate 2nd derivatives
+   d2P_dq2 = gt1.gradient(dP_dq, X)[:,0]
+   d2P_dmu2 = gt1.gradient(dP_dmu, X)[:,1]
+
+   # Calculate mixed derivatives
+   d2P_dqdmu = gt1.gradient(dP_dq, X)[:,1]
+   d2P_dmudq = gt1.gradient(dP_dmu, X)[:,0]
+
+   # Graph for derivative of T w.r.t.P
+   with tf.GradientTape(persistent=True, watch_accessed_variables=False) as gt3:
+      gt3.watch(P)
+
+      # Calculate T from the parametrisation
+      T = T_parametrization (P, Pc, N_t, parameters)
    
-   elif parameters['deriv_mode'] == 'fd':
+   # Calculate dT_dP
+   T_prime = gt3.gradient(T, P)
 
-      # Convert to np.arrays and reshape
-      P = P.numpy().reshape([parameters['n_1'], parameters['n_2']])
-      T = T.numpy().reshape([parameters['n_1'], parameters['n_2']])
-      T_prime = np.gradient(T.flatten(), P.flatten(), edge_order=2).reshape(T.shape)
-      Pc = float(Pc)
+   # Transform derivatives in the coordinate system
+   q = X[:,0]
+   mu = X[:,1]
+   
+   if parameters['coordinates'] == 'spherical':
 
-   return P, Pc, T, T_prime
+      dP_dx1 = - q ** 2 * dP_dq
+      dP_dx2 = - tf.sqrt(1 - mu **2) * dP_dmu
+
+      d2P_dx12 = 2 * q ** 3 * dP_dq + q ** 4 * d2P_dq2
+      d2P_dx22 = - mu * dP_dmu + (1 - mu ** 2) * d2P_dmu2
+
+      d2P_dx1dx2 = q ** 2 * tf.sqrt(1 - mu ** 2) * d2P_dqdmu
+      d2P_dx2dx1 = q ** 2 * tf.sqrt(1 - mu ** 2) * d2P_dmudq
+
+   elif parameters['coordinates'] == 'compactified':
+
+      dP_dx1 = dP_dq
+      dP_dx2 = dP_dmu
+      
+      d2P_dx12 = d2P_dq2
+      d2P_dx22 = d2P_dmu2
+
+      d2P_dx1x2 = d2P_dqdmu
+      d2P_dx2x1 = d2P_dqdmu
+
+   elif parameters['coordinates'] == 'cylindrical':
+
+      raise ValueError ("Tensorflow derivatives via automatic differentiation are not compatible with cylindrical coordinates.\n\
+                        Use finite differences or different coordinates.")
+
+   # Tranform to numpy meshgrid arrays
+   P = P.numpy().reshape([parameters['n_1'], parameters['n_2']])
+   T = T.numpy().reshape([parameters['n_1'], parameters['n_2']])
+   T_prime = T_prime.numpy().reshape([parameters['n_1'], parameters['n_2']])
+   Pc = float(Pc)
+   dP_dx1 = dP_dx1.numpy().reshape([parameters['n_1'], parameters['n_2']])
+   dP_dx2 = dP_dx2.numpy().reshape([parameters['n_1'], parameters['n_2']])
+   d2P_dx12 = d2P_dx12.numpy().reshape([parameters['n_1'], parameters['n_2']])
+   d2P_dx22 = d2P_dx22.numpy().reshape([parameters['n_1'], parameters['n_2']])
+   d2P_dx1dx2 = d2P_dx1dx2.numpy().reshape([parameters['n_1'], parameters['n_2']])
+   d2P_dx2dx1 = d2P_dx2dx1.numpy().reshape([parameters['n_1'], parameters['n_2']])
+
+   return P, Pc, T, T_prime, dP_dx1, dP_dx2, d2P_dx12, d2P_dx22, d2P_dx1dx2, d2P_dx2dx1
 
 
 # ===================================================================================================
 
 
-def magnetic_field (x1, x2, P, T, parameters):
+def get_scalar_functions_fd (X, N_p, N_t, parameters):
+   
+   # Get P, Pc and T from the parametrisation
+   P, Pc = P_parametrization (X, N_p, parameters)
+   T = T_parametrization (P, Pc, N_t, parameters)
+
+   # Transform to numpy meshgrid arrays
+   P = P.numpy().reshape([parameters['n_1'], parameters['n_2']])
+   T = T.numpy().reshape([parameters['n_1'], parameters['n_2']])
+   T_prime = np.gradient(T.flatten(), P.flatten(), edge_order=2).reshape(T.shape)
+   Pc = float(Pc)
+
+   # Unpack coordinates to numpy meshgrid arrays
+   if parameters['coordinates'] == 'spherical':
+
+      x1 = 1 / X[:,0]
+      x2 = tf.acos(X[:,1])
+
+   elif parameters['coordinates'] == 'compactified':
+
+      x1 = X[:,0]
+      x2 = X[:,1]
+
+   elif parameters['coordinates'] == 'cylindrical':
+
+      x1 = tf.sqrt(1 - X[:,1] ** 2) / X[:,0]
+      x2 = X[:,1] / X[:,0]
+
+   # Initialise arrays
+   dP_dx1, dP_dx2, d2P_dx12, d2P_dx22, d2P_dx1dx2, d2P_dx2dx1 = [np.zeros_like(P) for _ in range(6)]
+   
+   # Reshape
+   x1 = x1.numpy().reshape([parameters['n_1'], parameters['n_2']])
+   x2 = x2.numpy().reshape([parameters['n_1'], parameters['n_2']])
+
+   # Step size
+   dx1 = x1[1,1] - x1[0,1]
+   dx2 = x2[1,1] - x2[1,0]
+
+   # First derivative w.r.t. first coordinate x1
+   dP_dx1[0,:] = (-3 * P[0,:] + 4 * P[1,:] - P[2,:]) / (2 * dx1)
+   dP_dx1[1:-1,:] = (P[2:,:] - P[0:-2,:]) / (2 * dx1)
+   dP_dx1[-1,:] = (3 * P[-1,:] - 4 * P[-2,:] + P[-3,:]) / (2 * dx1)
+
+   # First derivative w.r.t. second coordinate x2
+   dP_dx2[:,0] = (-3 * P[:,0] + 4 * P[:,1] - P[:,2]) / (2 * dx2)
+   dP_dx2[:,1:-1] = (P[:,2:] - P[0:,:-2]) / (2 * dx2)
+   dP_dx2[:,-1] = (3 * P[:,-1] - 4 * P[:,-2] + P[:,-3]) / (2 * dx2)
+
+   # Second derivative w.r.t. first coordinate x1
+   d2P_dx12[0,:] = (2 * P[0,:] - 5 * P[1,:] + 4 * P[2,:] - P[3,:]) / dx1 ** 2
+   d2P_dx12[1:-1,:] = (P[0:-2,:] -2 * P[1:-1,:] + P[2:,:]) / dx1 ** 2
+   d2P_dx12[-1,:] = (2 * P[-1,:] - 5 * P[-2,:] + 4 * P[-3,:] - P[-4,:]) / dx1 ** 2
+   
+   # Second derivative w.r.t. second coordinate x2
+   d2P_dx22[:,0] = (2 * P[:,0] - 5 * P[:,1] + 4 * P[:,2] - P[:,3]) / dx2 ** 2
+   d2P_dx22[:,1:-1] = (P[:,0:-2] -2 * P[:,1:-1] + P[:,2:]) / dx2 ** 2
+   d2P_dx22[:,-1] = (2 * P[:,-1] - 5 * P[:,-2] + 4 * P[:,-3] - P[:,-4]) / dx2 ** 2
+
+   # Second mixed derivative
+   
+   d2P_dx1dx2[1:-1, 1:-1] = (P[2:,2:] - P[0:-2,2:] - P[2:,0:-2] + P[0:-2,0:-2]) / (4 * dx1 * dx2)
+   # d2P_dx2dx1[1:-1, 1:-1] = (P[2:,2:] - P[0:-2,2:] - P[2:,0:-2] + P[0:-2,0:-2]) / (4 * dx1 * dx2)
+
+   return P, Pc, T, T_prime, dP_dx1, dP_dx2, d2P_dx12, d2P_dx22, d2P_dx1dx2, d2P_dx2dx1
+
+
+# ===================================================================================================
+
+
+def get_scalar_functions(X, N_p, N_t, parameters):
+   
+   if parameters['deriv_mode'] == 'automatic':
+
+      P, Pc, T, T_prime, dP_dx1, dP_dx2, d2P_dx12, d2P_dx22, d2P_dx1dx2, d2P_dx2dx1 = get_scalar_functions_automatic (X, N_p, N_t, parameters)
+      
+   elif parameters['deriv_mode'] == 'fd':
+
+      P, Pc, T, T_prime, dP_dx1, dP_dx2, d2P_dx12, d2P_dx22, d2P_dx1dx2, d2P_dx2dx1 = get_scalar_functions_fd (X, N_p, N_t, parameters)
+
+   return P, Pc, T, T_prime, dP_dx1, dP_dx2, d2P_dx12, d2P_dx22, d2P_dx1dx2, d2P_dx2dx1
+
+
+# ===================================================================================================
+
+
+def magnetic_field (x1, x2, dP_dx1, dP_dx2, T, parameters):
     
    """
       Calculate the magnetic field from the stream functions 'P' and 'T' in the 'x1', 'x2' grid specified by 'coordinates'.
    """
-   # if parameters['deriv_mode'] == 'automatic':
-   #    with tf.GradientTape(persistent=True):
-   #       watc   
-         
-   #    dPdx1 = tf.
-   #    dPdx2 = 
-      
-
-   dPdx1 = np.gradient(P, x1[:,1], axis=0, edge_order=2)
-   dPdx2 = np.gradient(P, x2[1,:], axis=1, edge_order=2)
 
    if parameters['coordinates'] == 'spherical':
       
-      B1 = 1 / (x1 ** 2 * np.sin(x2)) * dPdx2
-      B2 = -1 / (x1 * np.sin(x2)) * dPdx1
+      B1 = 1 / (x1 ** 2 * np.sin(x2)) * dP_dx2
+      B2 = -1 / (x1 * np.sin(x2)) * dP_dx1
       B3 = 1 / (x1 * np.sin(x2)) * T
 
    elif parameters['coordinates'] == 'compactified':
 
-      B1 =  - x1 ** 2 * dPdx2
-      B2 = -x1 ** 3 / np.sqrt (1 - x2 ** 2) * dPdx1
+      B1 = - x1 ** 2 * dP_dx2
+      B2 = - x1 ** 3 / np.sqrt (1 - x2 ** 2) * dP_dx1
       B3 = x1 / np.sqrt (1 - x2 ** 2) * T
 
    elif parameters['coordinates'] == 'cylindrical':
 
-      B1 = - 1 / x1 * dPdx2
-      B2 = 1 / x1 * dPdx1
+      B1 = - 1 / x1 * dP_dx2
+      B2 = 1 / x1 * dP_dx1
       B3 = 1 / x1 * T
 
    else:
@@ -285,31 +400,28 @@ def magnetic_field (x1, x2, P, T, parameters):
 # ===================================================================================================
 
 
-def electric_field (x1, x2, P, R_lc, parameters):
+def electric_field (x1, x2, dP_dx1, dP_dx2, parameters):
     
    """
       Calculate the electric field from the stream function 'P' in the 'x1', 'x2' grid specified by 'coordinates'.
    """
 
-   dPdx1 = np.gradient(P, x1[:,1], axis=0, edge_order=2)
-   dPdx2 = np.gradient(P, x2[1,:], axis=1, edge_order=2)
-
    if parameters['coordinates'] == 'spherical':
       
-      E1 = - 1 / R_lc * dPdx1
-      E2 = - 1 / (R_lc * x1) * dPdx2
+      E1 = - 1 / parameters['R_lc'] * dP_dx1
+      E2 = - 1 / (parameters['R_lc'] * x1) * dP_dx2
       E3 = np.zeros_like (E1)
 
    elif parameters['coordinates'] == 'compactified':
 
-      E1 = 1 / R_lc * x1 ** 2 * dPdx1
-      E2 = 1 / R_lc * x1 * np.sqrt (1 - x2 ** 2) * dPdx2
+      E1 = 1 / parameters['R_lc'] * x1 ** 2 * dP_dx1
+      E2 = 1 / parameters['R_lc'] * x1 * np.sqrt (1 - x2 ** 2) * dP_dx2
       E3 = np.zeros_like (E1)
 
    elif parameters['coordinates'] == 'cylindrical':
 
-      E1 = - 1 / R_lc * dPdx1
-      E2 = - 1 / R_lc * dPdx2
+      E1 = - 1 / parameters['R_lc'] * dP_dx1
+      E2 = - 1 / parameters['R_lc'] * dP_dx2
       E3 = np.zeros_like (E1)
       
    else:
@@ -347,43 +459,43 @@ def magnitude (u1, u2, u3):
 # ===================================================================================================
 
 
-def div (x1, x2, u1, u2, parameters):
-    
-   '''
-      Calculate the divergence of a vector 'u' in the 'coordinates' system. Axisymmetry is supposed. 
-   '''
-
-   du1dx1 = np.gradient(u1, x1[:,1], axis=0, edge_order=2)
-   du2dx2 = np.gradient(u2, x2[1,:], axis=1, edge_order=2)
+def div_B (x1, x2, d2P_dx1dx2, d2P_dx2dx1, parameters):
 
    if parameters['coordinates'] == 'spherical':
 
-      divergence =  1 / x1 ** 2 * (2 * x1 * u1 + x1 ** 2 * du1dx1) + 1 / (x1 * np.sin (x2)) * (np.cos (x2) * u2 + np.sin(x2) * du2dx2)
+      divB = 1 / (x1 ** 2 * np.sin (x2)) * (d2P_dx1dx2 - d2P_dx2dx1)
 
    elif parameters['coordinates'] == 'compactified':
 
-      divergence = 2 * x1 * u1 + x1 ** 2 * du1dx1 + x1 / np.sqrt(1 - x2 ** 2) * (x2 * u2 + np.sqrt(1 - x2 ** 2) * du2dx2)
+      divB = x1 ** 4 * (d2P_dx1dx2 - d2P_dx2dx1)
 
-   elif parameters['coordinates'] == 'cylindrical':
-
-      divergence = 1 / x1 * (u1 + x1 * du1dx1) + du2dx2
-
-   else:
-
-      raise ValueError ("coordinates must be one of 'spherical', 'compactified', 'cylindrical'.\n\
-                        Current value --> {}".format(parameters['coordinates']))
-
-   return divergence
+   return divB
 
 
 # ===================================================================================================
 
 
-def get_fields (x1, x2, P, T, parameters):
+def div_E (x1, x2, dP_dx1, dP_dx2, d2P_dx12, d2P_dx22, parameters):
+
+   if parameters['coordinates'] == 'spherical':
+
+      divE = - 1 / parameters['R_lc'] * (2 / x1 * dP_dx1 + d2P_dx12 + 1 / x1 ** 2 * np.cos (x2) / np.sin (x2) * dP_dx2 + 1 / x1 ** 2 * d2P_dx22)
+
+   elif parameters['coordinates'] == 'compactified':
+
+      divE = - 1 / parameters['R_lc'] * (x1 ** 4 * d2P_dx12 - 2 * x1 ** 2 * x2 * dP_dx2 + x1 ** 2 (1 - x2 ** 2) * d2P_dx22)
+
+   return divE
+
+
+# ===================================================================================================
+
+
+def get_fields (x1, x2, P, T, dP_dx1, dP_dx2, d2P_dx12, d2P_dx22, d2P_dx1dx2, d2P_dx2dx1, parameters):
    
    # Magnetic and electric field
-   B_1, B_2, B_3 = magnetic_field (x1, x2, P, T, parameters)
-   E_1, E_2, E_3 = electric_field (x1, x2, P, parameters ['R_lc'], parameters)
+   B_1, B_2, B_3 = magnetic_field (x1, x2, dP_dx1, dP_dx2, T, parameters)
+   E_1, E_2, E_3 = electric_field (x1, x2, dP_dx1, dP_dx2, parameters)
 
    # Magnitude
    B_mag = magnitude (B_1, B_2, B_3)
@@ -394,10 +506,10 @@ def get_fields (x1, x2, P, T, parameters):
    E_dot_B = dot (B_1, B_2, B_3, E_1, E_2, E_3)
 
    # Divergence
-   div_B = div(x1, x2, B_1, B_2, parameters)
-   div_E = div(x1, x2, E_1, E_2, parameters)
+   divB = div_B(x1, x2, d2P_dx1dx2, d2P_dx2dx1, parameters)
+   divE = div_E(x1, x2, dP_dx1, dP_dx2, d2P_dx12, d2P_dx22, parameters)
 
-   return B_1, B_2, B_3, E_1, E_2, E_3, B_mag, E_mag, B_pol, E_dot_B, div_B, div_E
+   return B_1, B_2, B_3, E_1, E_2, E_3, B_mag, E_mag, B_pol, E_dot_B, divB, divE
 
 
 # ===================================================================================================
@@ -417,56 +529,29 @@ def get_pinn (X, P, Pc, N_p, N_t, parameters):
 # ===================================================================================================
 
 
-def pulsar_equation (x1, x2, P, T, T_prime, parameters):
+def pulsar_equation (x1, x2, dP_dx1, dP_dx2, d2P_dx12, d2P_dx22, T, T_prime, parameters):
    
-   # Initialise arrays
-   dPdx1, dPdx2, d2Pdx12, d2Pdx22 = [np.zeros_like(P) for _ in range(4)]
-   
-   # Step size
-   dx1 = x1[1,1] - x1[0,1]
-   dx2 = x2[1,1] - x2[1,0]
-
-   # First derivative w.r.t. first coordinate x1
-   dPdx1[0,:] = (-3 * P[0,:] + 4 * P[1,:] - P[2,:]) / (2 * dx1)
-   dPdx1[1:-1,:] = (P[2:,:] - P[0:-2,:]) / (2 * dx1)
-   dPdx1[-1,:] = (3 * P[-1,:] - 4 * P[-2,:] + P[-3,:]) / (2 * dx1)
-
-   # First derivative w.r.t. second coordinate x2
-   dPdx2[:,0] = (-3 * P[:,0] + 4 * P[:,1] - P[:,2]) / (2 * dx2)
-   dPdx2[:,1:-1] = (P[:,2:] - P[0:,:-2]) / (2 * dx2)
-   dPdx2[:,-1] = (3 * P[:,-1] - 4 * P[:,-2] + P[:,-3]) / (2 * dx2)
-
-   # Second derivative w.r.t. first coordinate x1
-   d2Pdx12[0,:] = (2 * P[0,:] - 5 * P[1,:] + 4 * P[2,:] - P[3,:]) / dx1 ** 2
-   d2Pdx12[1:-1,:] = (P[0:-2,:] -2 * P[1:-1,:] + P[2:,:]) / dx1 ** 2
-   d2Pdx12[-1,:] = (2 * P[-1,:] - 5 * P[-2,:] + 4 * P[-3,:] - P[-4,:]) / dx1 ** 2
-   
-   # Second derivative w.r.t. second coordinate x2
-   d2Pdx22[:,0] = (2 * P[:,0] - 5 * P[:,1] + 4 * P[:,2] - P[:,3]) / dx2 ** 2
-   d2Pdx22[:,1:-1] = (P[:,0:-2] -2 * P[:,1:-1] + P[:,2:]) / dx2 ** 2
-   d2Pdx22[:,-1] = (2 * P[:,-1] - 5 * P[:,-2] + 4 * P[:,-3] - P[:,-4]) / dx2 ** 2
-
    # Calculate Pulsar equation depending on the coordinates
 
    if parameters['coordinates'] == 'spherical':
       
       beta = x1 * np.sin(x2) / parameters['R_lc']
 
-      pulsar_eq = (1 - beta ** 2) * (d2Pdx12 + 1 / x1 ** 2 * d2Pdx22) - 2 / x1 * beta ** 2 * dPdx1 \
-                  - 1 / x1 ** 2 * np.cos (x2) / np.sin(x2) * (1 + beta ** 2) * dPdx2 + T * T_prime
+      pulsar_eq = (1 - beta ** 2) * (d2P_dx12 + 1 / x1 ** 2 * d2P_dx22) - 2 / x1 * beta ** 2 * dP_dx1 \
+                  - 1 / x1 ** 2 * np.cos (x2) / np.sin(x2) * (1 + beta ** 2) * dP_dx2 + T * T_prime
       
    elif parameters['coordinates'] == 'compactified':
 
       beta = np.sqrt (1 - x2 ** 2) / (x1 * parameters['R_lc'])
 
-      pulsar_eq = x1 ** 2 * (1 - beta ** 2) * (x1 ** 2 * d2Pdx12 + (1 - x2 ** 2) * d2Pdx22) \
-                  + 2 * x1 ** 2 * (x1 * dPdx1 + x2 * beta ** 2 * dPdx2) + T * T_prime
+      pulsar_eq = x1 ** 2 * (1 - beta ** 2) * (x1 ** 2 * d2P_dx12 + (1 - x2 ** 2) * d2P_dx22) \
+                  + 2 * x1 ** 2 * (x1 * dP_dx1 + x2 * beta ** 2 * dP_dx2) + T * T_prime
       
    elif parameters['coordinates'] == 'cylindrical':
 
       beta = x1 / parameters['R_lc']
 
-      pulsar_eq = (1 - beta ** 2) * (d2Pdx12 - 1 / x1 * dPdx1 + d2Pdx22) - 2 * beta * dPdx1 + T * T_prime   
+      pulsar_eq = (1 - beta ** 2) * (d2P_dx12 - 1 / x1 * dP_dx1 + d2P_dx22) - 2 * beta * dP_dx1 + T * T_prime   
       
    else:
 
