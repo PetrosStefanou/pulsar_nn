@@ -7,6 +7,17 @@
 # Python cache
 plotting/__pycache__/*
 
-# Jorge's implemetation
+# Nextcloud sync files
+.owncloudsync.log
+.sync_829705d76131.db
+.sync_829705d76131.db-shm
+.sync_829705d76131.db-wal
+
+# Jorge's implementation
 plotting/Pulsar_equations_results.py
 Pulsar_equation_alternative_idea_T.py
+
+# File with unused or old functions
+plotting/module_dump.py
+
+
