@@ -1,11 +1,14 @@
 # Contents of data/ directory
 /data/
 
+# Contents of the misc/directory
+/misc/
+
 # .vscode directory
 /.vscode
 
 # Python cache
-plotting/__pycache__/*
+**/__pycache__/*
 
 # Nextcloud sync files
 .owncloudsync.log
@@ -13,11 +16,13 @@ plotting/__pycache__/*
 .sync_829705d76131.db-shm
 .sync_829705d76131.db-wal
 
-# Jorge's implementation
-plotting/Pulsar_equations_results.py
-Pulsar_equation_alternative_idea_T.py
+# Testing files
+test.ipynb
+test.py
 
 # File with unused or old functions
 plotting/module_dump.py
 
+# Figures
+plotting/Figures/
 
